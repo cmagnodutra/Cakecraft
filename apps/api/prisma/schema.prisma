@@ -1,0 +1,251 @@
+// Schema de dados do CakeCraft.
+// Traduz as entidades citadas ao longo do RFC-001 (a Secao 5.2 "Modelo de
+// Dados" do RFC ficou sem o diagrama original) para o Prisma.
+//
+// Cobre nesta primeira versao: identidade e acesso (User, RefreshToken),
+// catalogo de ingredientes (Ingredient) e o pedido com sua configuracao de
+// bolo (Order, CakeConfiguration, CakeLayer, CakeLayerFilling, OrderItem),
+// alem de Payment e XpTransaction para as regras RN03/RN04. As regras de
+// negocio em si (RN01-RN04) NAO estao implementadas aqui - isso e trabalho
+// das proximas branches (pricing, payments, gamification).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENTE
+  ADMIN
+}
+
+/// Status do pedido - cobre o fluxo do Kanban (RF08) + pre-pagamento (RN03).
+enum OrderStatus {
+  AGUARDANDO_PAGAMENTO
+  EM_ESPERA
+  EM_PRODUCAO
+  FINALIZACAO
+  PRONTO
+  ENTREGUE
+  CANCELADO
+}
+
+enum PaymentStatus {
+  PENDENTE
+  PAGO
+  EXPIRADO
+  ESTORNADO
+}
+
+enum IngredientType {
+  MASSA
+  RECHEIO
+  COBERTURA
+}
+
+enum CakeFormat {
+  REDONDO
+  QUADRADO
+  RETANGULAR
+}
+
+model User {
+  id           String    @id @default(uuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  phone        String?
+  role         Role      @default(CLIENTE)
+
+  dietaryRestrictions String[]  @default([])
+  dietaryConsentAt    DateTime?
+
+  xp    Int @default(0)
+  level Int @default(1)
+
+  anonymizedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders         Order[]
+  refreshTokens  RefreshToken[]
+  xpTransactions XpTransaction[]
+
+  @@map("users")
+}
+
+/// Refresh tokens ativos, para permitir revogacao (logout, troca de senha).
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+/// Item do catalogo: massa, recheio ou cobertura, com preco por kg.
+model Ingredient {
+  id         String         @id @default(uuid())
+  name       String
+  type       IngredientType
+  pricePerKg Decimal        @db.Decimal(10, 2)
+  active     Boolean        @default(true)
+
+  /// RN01: massas aeradas (ex. Pao de Lo) sao bloqueadas em bolos de +2 andares.
+  isAerated Boolean @default(false)
+
+  allergens String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cakeLayersAsDough    CakeLayer[]        @relation("LayerDough")
+  cakeLayersAsCoverage CakeLayer[]        @relation("LayerCoverage")
+  cakeLayerFillings    CakeLayerFilling[]
+  orderItems           OrderItem[]
+
+  @@map("ingredients")
+}
+
+model Order {
+  id         String      @id @default(uuid())
+  userId     String
+  status     OrderStatus @default(AGUARDANDO_PAGAMENTO)
+  totalPrice Decimal     @db.Decimal(10, 2)
+
+  toppingMessage  String?
+  riceImageUrl    String?
+  deliveryAddress String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id])
+  cakeConfiguration CakeConfiguration?
+  items             OrderItem[]
+  payment           Payment?
+  xpTransactions    XpTransaction[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("orders")
+}
+
+/// Configuracao visual/estrutural do bolo dentro de um pedido.
+model CakeConfiguration {
+  id          String     @id @default(uuid())
+  orderId     String     @unique
+  format      CakeFormat
+  floorsCount Int
+  /// Cor/tingimento aplicado sobre a cobertura escolhida (RF04)
+  colorHex    String
+  dietaryFlags String[] @default([])
+
+  createdAt DateTime @default(now())
+
+  order  Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  layers CakeLayer[]
+
+  @@map("cake_configurations")
+}
+
+/// Um andar do bolo: massa + cobertura + (ate 2) recheios + peso estimado.
+///
+/// A cobertura e um insumo precificado como qualquer outro (Chantilly,
+/// Pasta Americana etc.), por isso tem seu proprio coverageIngredientId por
+/// andar - colorHex (em CakeConfiguration) representa so o tingimento
+/// aplicado sobre essa cobertura, nunca a cobertura em si.
+model CakeLayer {
+  id                   String  @id @default(uuid())
+  cakeConfigurationId  String
+  floorNumber          Int
+  doughIngredientId    String
+  coverageIngredientId String
+  estimatedWeightKg    Decimal @db.Decimal(6, 3)
+
+  cakeConfiguration  CakeConfiguration  @relation(fields: [cakeConfigurationId], references: [id], onDelete: Cascade)
+  doughIngredient    Ingredient         @relation("LayerDough", fields: [doughIngredientId], references: [id])
+  coverageIngredient Ingredient         @relation("LayerCoverage", fields: [coverageIngredientId], references: [id])
+  fillings           CakeLayerFilling[]
+
+  @@index([cakeConfigurationId])
+  @@map("cake_layers")
+}
+
+/// Tabela de juncao N:N entre CakeLayer e Ingredient (recheios).
+/// Regra "ate 2 recheios por andar" e validada na camada de servico.
+model CakeLayerFilling {
+  cakeLayerId  String
+  ingredientId String
+
+  cakeLayer  CakeLayer  @relation(fields: [cakeLayerId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@id([cakeLayerId, ingredientId])
+  @@map("cake_layer_fillings")
+}
+
+/// Snapshot do preco no momento da compra, para que mudancas futuras no
+/// catalogo nao afetem pedidos ja fechados.
+model OrderItem {
+  id                     String  @id @default(uuid())
+  orderId                String
+  ingredientId           String
+  ingredientNameSnapshot String
+  pricePerKgSnapshot     Decimal @db.Decimal(10, 2)
+  weightKg               Decimal @db.Decimal(6, 3)
+  subtotal               Decimal @db.Decimal(10, 2)
+
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Payment {
+  id               String        @id @default(uuid())
+  orderId          String        @unique
+  gatewayProvider  String
+  gatewayReference String
+  qrCode           String?
+  copyPasteCode    String?
+  status           PaymentStatus @default(PENDENTE)
+  expiresAt        DateTime
+  paidAt           DateTime?
+  refundedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+/// Historico auditavel de ganho de XP (nao depende so do contador em User).
+model XpTransaction {
+  id        String   @id @default(uuid())
+  userId    String
+  orderId   String?
+  amount    Int
+  reason    String
+  createdAt DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id])
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([userId])
+  @@map("xp_transactions")
+}
