@@ -1,8 +1,9 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
+import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
 
 describe('Health (e2e)', () => {
   let app: INestApplication;
@@ -14,6 +15,8 @@ describe('Health (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalFilters(new AllExceptionsFilter());
     await app.init();
   });
 
@@ -28,7 +31,15 @@ describe('Health (e2e)', () => {
     expect(response.body.service).toBe('cakecraft-api');
   });
 
-  it('GET /api/rota-inexistente responde 404', async () => {
-    await request(app.getHttpServer()).get('/api/rota-inexistente').expect(404);
+  it('GET em rota inexistente responde 404 no formato de erro padronizado', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/rota-inexistente')
+      .expect(404);
+
+    expect(response.body).toMatchObject({
+      statusCode: 404,
+      path: '/api/rota-inexistente',
+    });
+    expect(typeof response.body.timestamp).toBe('string');
   });
 });

@@ -1,0 +1,10 @@
+/**
+ * Variaveis minimas para os testes e2e subirem a aplicacao completa.
+ * Usa os mesmos valores do docker-compose de desenvolvimento, e respeita
+ * variaveis ja definidas no ambiente (que e como o CI injeta as suas).
+ */
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL =
+  process.env.DATABASE_URL ??
+  'postgresql://cakecraft:cakecraft@localhost:5432/cakecraft?schema=public';
+process.env.REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
