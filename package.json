@@ -9,5 +9,9 @@
   ],
   "engines": {
     "node": ">=20.0.0"
+  },
+  "overrides": {
+    "webpack": "^5.105.4",
+    "multer": "^2.4.0"
   }
 }
