@@ -1,0 +1,13 @@
+{
+  "name": "cakecraft",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CakeCraft - Plataforma Web para montagem de bolos customizados com precificacao dinamica e gestao de producao em tempo real",
+  "license": "MIT",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
