@@ -1,0 +1,15 @@
+# Normaliza as quebras de linha para LF em todo o repositorio,
+# independente do sistema operacional de quem fizer o commit. Sem isso,
+# um checkout no Windows converte arquivos para CRLF automaticamente e
+# o Git passa a reportar "modificado" em arquivos com conteudo identico
+# (foi o que aconteceu com as migrations do Prisma e o .env.example).
+* text=auto eol=lf
+
+# Binarios: nunca normalizar, o Git deve trata-los como sao.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
